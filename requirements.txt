@@ -1,0 +1,4 @@
+slack-bolt>=1.18.0
+slack-sdk>=3.26.0
+PyGithub>=2.1.1
+sendgrid>=6.11.0
