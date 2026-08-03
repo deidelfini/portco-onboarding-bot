@@ -94,6 +94,9 @@ TASK_BY_ID  = {t["id"]: t for t in ONBOARDING_TASKS}
 # ── SQLite persistence ───────────────────────────────────────────────────────
 
 def _init_db():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
     with db_lock:
         conn = sqlite3.connect(DB_PATH)
         conn.execute("""
