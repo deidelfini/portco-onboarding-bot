@@ -29,6 +29,16 @@ GITHUB_REPO      = os.environ.get("GITHUB_REPO", "Exceptional-Capital/founder-re
 FROM_EMAIL       = os.environ.get("FROM_EMAIL", "")
 REMINDER_DELAY   = int(os.environ.get("REMINDER_DELAY_SECONDS", str(48 * 60 * 60)))
 
+# Internal team members auto-invited to every new portco channel
+TEAM_SLACK_IDS = [
+    uid for uid in [
+        os.environ.get("MELISSA_SLACK_ID"),
+        os.environ.get("GRAHAM_SLACK_ID"),
+        os.environ.get("MARELL_SLACK_ID"),
+        os.environ.get("ANDREW_SLACK_ID"),
+    ] if uid
+]
+
 # DB_PATH is set to /data/sessions.db on Railway (mounted volume), local fallback
 DB_PATH = os.environ.get("DB_PATH", "sessions.db")
 db_lock = threading.Lock()
@@ -420,6 +430,39 @@ def _welcome_blocks(company_name: str) -> list:
     ]
 
 
+def _invite_team_and_founders(client, channel_id: str, founder_emails: list, notify_channel_id: str | None):
+    """Invite the internal team and founders (looked up by email) to a new portco channel."""
+    if TEAM_SLACK_IDS:
+        try:
+            client.conversations_invite(channel=channel_id, users=",".join(TEAM_SLACK_IDS))
+        except Exception as e:
+            print(f"⚠️  Could not invite internal team to {channel_id}: {e}")
+
+    failed_founders = []
+    for email in founder_emails:
+        try:
+            lookup      = client.users_lookupByEmail(email=email)
+            founder_id  = lookup["user"]["id"]
+            client.conversations_invite(channel=channel_id, users=founder_id)
+        except Exception as e:
+            # Most common cause: founder has no Slack account/workspace membership yet.
+            print(f"⚠️  Could not invite founder {email} to {channel_id}: {e}")
+            failed_founders.append(email)
+
+    if failed_founders and notify_channel_id:
+        emails_list = "\n".join(f"• {e}" for e in failed_founders)
+        try:
+            client.chat_postMessage(
+                channel=notify_channel_id,
+                text=(
+                    "⚠️ Couldn't auto-invite the following founder(s) to the new portco channel "
+                    f"(likely no Slack account yet) — please invite manually:\n{emails_list}"
+                ),
+            )
+        except Exception as e:
+            print(f"⚠️  Could not post founder-invite failure notice: {e}")
+
+
 def _create_portco_channel(client, session_id: str):
     session      = _load(session_id)
     company_name = session["company_name"]
@@ -430,6 +473,13 @@ def _create_portco_channel(client, session_id: str):
         channel_id = result["channel"]["id"]
         session["portco_channel_id"] = channel_id
         _save(session_id, session)
+
+        _invite_team_and_founders(
+            client,
+            channel_id,
+            session.get("founder_emails", []),
+            session.get("internal_channel_id"),
+        )
 
         # 1. Post the full welcome message
         welcome_result = client.chat_postMessage(
